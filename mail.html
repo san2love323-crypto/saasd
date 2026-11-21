@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>일회용 메일</title>
+<style>
+  :root { --bg:#12141a; --panel:#1b1e27; --line:#2b3040; --text:#e8eaf0; --dim:#8b91a3; --acc:#5eead4; --bad:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, "Malgun Gothic", sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:20px 14px 60px; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input, textarea { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:9px 10px; font:inherit; min-width:0; }
+  input:focus, textarea:focus { outline:2px solid var(--acc); outline-offset:-1px; }
+  textarea { width:100%; min-height:120px; resize:vertical; }
+  button { background:var(--acc); color:#06231f; border:0; border-radius:7px; padding:9px 13px; font:inherit; font-weight:600; cursor:pointer; }
+  button.sub { background:transparent; color:var(--text); border:1px solid var(--line); font-weight:400; }
+  .grow { flex:1; }
+  .dim { color:var(--dim); font-size:13px; }
+  .addr { font-family:ui-monospace, Consolas, monospace; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; }
+  .tabs button { background:transparent; color:var(--dim); border:1px solid var(--line); font-weight:400; }
+  .tabs button.on { color:var(--acc); border-color:var(--acc); }
+  .item { padding:10px 4px; border-top:1px solid var(--line); cursor:pointer; }
+  .item:first-child { border-top:0; }
+  .item:hover { background:#20242f; }
+  .item b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  pre { white-space:pre-wrap; word-break:break-word; font:inherit; margin:10px 0 0; }
+  iframe { width:100%; height:420px; border:1px solid var(--line); border-radius:7px; background:#fff; margin-top:10px; }
+  .err { color:var(--bad); }
+  .hide { display:none; }
+  label { display:block; margin:8px 0 4px; font-size:13px; color:var(--dim); }
+  .full { width:100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>일회용 메일</h1>
+
+  <div id="login" class="panel">
+    <div class="row">
+      <input id="pw" type="password" class="grow" placeholder="비밀번호" autocomplete="current-password">
+      <button id="loginBtn">들어가기</button>
+    </div>
+    <div id="loginErr" class="err dim"></div>
+  </div>
+
+  <div id="app" class="hide">
+    <div class="panel">
+      <div class="row">
+        <input id="local" class="addr grow" placeholder="주소 이름" spellcheck="false">
+        <span class="addr dim" id="dom"></span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="randBtn" class="sub">새 주소 뽑기</button>
+        <button id="copyBtn" class="sub">주소 복사</button>
+        <span class="dim" id="note"></span>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button id="tabIn" class="on">받은 메일</button>
+      <button id="tabOut">메일 쓰기</button>
+    </div>
+
+    <div id="inbox" class="panel">
+      <div id="list"><div class="dim">아직 온 메일이 없어. 5초마다 새로 확인해.</div></div>
+    </div>
+
+    <div id="view" class="panel hide">
+      <div class="row">
+        <button id="backBtn" class="sub">목록으로</button>
+        <button id="replyBtn" class="sub">답장</button>
+        <button id="delBtn" class="sub">삭제</button>
+      </div>
+      <h3 id="vSubj" style="margin:12px 0 2px"></h3>
+      <div class="dim" id="vMeta"></div>
+      <pre id="vBody"></pre>
+      <iframe id="vHtml" class="hide" sandbox="" referrerpolicy="no-referrer"></iframe>
+    </div>
+
+    <div id="compose" class="panel hide">
+      <div class="dim">보내는 주소: <span class="addr" id="fromShow"></span></div>
+      <label for="to">받는 사람</label>
+      <input id="to" class="full" type="email" placeholder="someone@example.com">
+      <label for="subj">제목</label>
+      <input id="subj" class="full">
+      <label for="body">내용</label>
+      <textarea id="body"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="sendBtn">보내기</button>
+        <span id="sendMsg" class="dim"></span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let pass = "", domain = "", current = null, timer = null;
+
+function store(k, v) { try { v === undefined ? 0 : sessionStorage.setItem(k, v); return sessionStorage.getItem(k); } catch (e) { return null; } }
+
+async function api(path, body) {
+  const opt = { headers: { "X-Pass": pass } };
+  if (body) { opt.method = "POST"; opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, opt);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "오류 " + r.status);
+  return data;
+}
+
+function randomLocal() {
+  const c = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let s = "";
+  crypto.getRandomValues(new Uint8Array(10)).forEach(n => s += c[n % c.length]);
+  return s;
+}
+function local() { return $("local").value.trim().toLowerCase(); }
+function fullAddr() { return local() + "@" + domain; }
+function when(ts) { return new Date(ts * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+
+async function login() {
+  pass = $("pw").value;
+  $("loginErr").textContent = "";
+  if (/[^\x20-\x7e]/.test(pass)) { $("loginErr").textContent = "비밀번호는 영어/숫자만 가능해."; return; }
+  try {
+    const info = await api("/api/info");
+    domain = info.domain;
+    store("pass", pass);
+    $("dom").textContent = "@" + domain;
+    $("note").textContent = "받은 메일은 " + info.keep_hours + "시간 뒤 자동 삭제";
+    if (!info.can_send) $("sendMsg").textContent = "서버에 보내기 설정이 아직 안 되어 있어.";
+    $("local").value = store("local") || randomLocal();
+    $("login").classList.add("hide");
+    $("app").classList.remove("hide");
+    refresh();
+    timer = setInterval(refresh, 5000);
+  } catch (e) { $("loginErr").textContent = e.message; }
+}
+
+async function refresh() {
+  if (!local() || !$("view").classList.contains("hide")) return;
+  store("local", local());
+  $("fromShow").textContent = fullAddr();
+  try {
+    const rows = await api("/api/inbox?addr=" + encodeURIComponent(local()));
+    const list = $("list");
+    list.textContent = "";
+    if (!rows.length) {
+      const d = document.createElement("div");
+      d.className = "dim"; d.textContent = "아직 온 메일이 없어. 5초마다 새로 확인해.";
+      list.append(d); return;
+    }
+    for (const m of rows) {
+      const d = document.createElement("div"); d.className = "item";
+      const b = document.createElement("b"); b.textContent = m.subject;
+      const s = document.createElement("span"); s.className = "dim"; s.textContent = m.from + " · " + when(m.ts);
+      d.append(b, s);
+      d.onclick = () => openMsg(m.id);
+      list.append(d);
+    }
+  } catch (e) { /* 다음 번에 다시 시도 */ }
+}
+
+async function openMsg(id) {
+  try {
+    const m = await api("/api/msg?id=" + encodeURIComponent(id));
+    current = Object.assign({ id }, m);
+    $("vSubj").textContent = m.subject;
+    $("vMeta").textContent = m.from + " → " + m.to + "@" + domain + " · " + when(m.ts);
+    $("vBody").textContent = m.body || (m.html ? "" : "(내용 없음)");
+    // HTML 메일은 스크립트가 못 돌게 잠근 iframe 안에만 표시
+    const f = $("vHtml");
+    if (m.html && !m.body) { f.srcdoc = m.html; f.classList.remove("hide"); } else { f.srcdoc = ""; f.classList.add("hide"); }
+    show("view");
+  } catch (e) { alert(e.message); }
+}
+
+function show(which) {
+  for (const id of ["inbox", "view", "compose"]) $(id).classList.toggle("hide", id !== which);
+  $("tabIn").classList.toggle("on", which !== "compose");
+  $("tabOut").classList.toggle("on", which === "compose");
+  if (which === "inbox") refresh();
+}
+
+$("loginBtn").onclick = login;
+$("pw").onkeydown = e => { if (e.key === "Enter") login(); };
+$("randBtn").onclick = () => { $("local").value = randomLocal(); show("inbox"); };
+$("local").onchange = () => show("inbox");
+$("copyBtn").onclick = async () => {
+  try { await navigator.clipboard.writeText(fullAddr()); $("copyBtn").textContent = "복사됨"; }
+  catch (e) { prompt("복사해서 써:", fullAddr()); }
+  setTimeout(() => $("copyBtn").textContent = "주소 복사", 1200);
+};
+$("tabIn").onclick = () => show("inbox");
+$("tabOut").onclick = () => { $("fromShow").textContent = fullAddr(); show("compose"); };
+$("backBtn").onclick = () => show("inbox");
+$("delBtn").onclick = async () => { if (current) { await api("/api/delete", { id: current.id }).catch(() => {}); show("inbox"); } };
+$("replyBtn").onclick = () => {
+  if (!current) return;
+  const m = /<([^>]+)>/.exec(current.from);
+  $("to").value = m ? m[1] : current.from;
+  $("subj").value = /^re:/i.test(current.subject) ? current.subject : "Re: " + current.subject;
+  $("local").value = current.to;
+  $("fromShow").textContent = fullAddr();
+  show("compose");
+};
+$("sendBtn").onclick = async () => {
+  const msg = $("sendMsg");
+  msg.className = "dim"; msg.textContent = "보내는 중...";
+  $("sendBtn").disabled = true;
+  try {
+    await api("/api/send", { from: local(), to: $("to").value, subject: $("subj").value, body: $("body").value });
+    msg.textContent = "보냈어.";
+    $("body").value = ""; $("subj").value = "";
+  } catch (e) { msg.className = "err dim"; msg.textContent = e.message; }
+  $("sendBtn").disabled = false;
+};
+
+const saved = store("pass");
+if (saved) { $("pw").value = saved; login(); }
+</script>
+</body>
+</html>
